@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Google Maps 商家評價爬蟲戰情室</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen antialiased">
+  <div class="max-w-5xl mx-auto px-4 py-8 space-y-6">
+    <!-- Header -->
+    <header class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight text-white">🗺️ Google 商家評價自動爬蟲站</h1>
+        <p class="text-sm text-slate-400 mt-1">
+          底層驅動：<code class="text-sky-400">YasogaN/google-maps-review-scraper</code> (impit TLS 指紋模擬)
+        </p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="fill-demo-url" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700 transition cursor-pointer">
+          填入台北 101 範例網址
+        </button>
+        <button id="export-csv-btn" disabled class="px-3 py-1.5 rounded-lg bg-emerald-600/20 text-emerald-400 border border-emerald-700/50 text-xs font-medium disabled:opacity-40 cursor-pointer">
+          📥 匯出 CSV
+        </button>
+      </div>
+    </header>
+
+    <!-- Input Form -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+      <div class="space-y-2">
+        <label class="block text-sm font-medium text-slate-200">
+          貼上 Google Maps 店家網址（支援 <code class="text-sky-400">/maps/place/...</code> 或 <code class="text-sky-400">maps.app.goo.gl/...</code>）
+        </label>
+        <div class="flex flex-col sm:flex-row gap-2.5">
+          <input
+            id="url-input"
+            type="url"
+            placeholder="https://www.google.com/maps/place/..."
+            class="flex-1 px-3.5 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-sky-500"
+          />
+          <select id="sort-select" class="px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm text-slate-200">
+            <option value="newest">最新評論 (Newest)</option>
+            <option value="relevant">最相關 (Relevant)</option>
+            <option value="lowest_rating">最低星等優先 (抓負評)</option>
+            <option value="highest_rating">最高星等優先</option>
+          </select>
+          <select id="pages-select" class="px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm text-slate-200">
+            <option value="1">1 頁 (~10 則)</option>
+            <option value="3" selected>3 頁 (~30 則)</option>
+            <option value="5">5 頁 (~50 則)</option>
+            <option value="10">10 頁 (~100 則)</option>
+          </select>
+          <button
+            id="scrape-btn"
+            class="px-5 py-2.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-sm transition cursor-pointer whitespace-nowrap"
+          >
+            🚀 開始爬取
+          </button>
+        </div>
+        <p class="text-xs text-slate-400">
+          💡 提示：若您是在 Google 搜尋頁面找到店家（例如搜尋「紅頂果子」），請點開右側店家資訊的<strong>「分享 ➔ 複製連結」</strong>再貼到這裡！
+        </p>
+      </div>
+
+      <!-- Alert Box -->
+      <div id="alert-box" class="hidden rounded-lg p-3 text-sm border"></div>
+    </section>
+
+    <!-- Stats Summary -->
+    <section id="stats-section" class="hidden grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div class="text-xs text-slate-400">本次抓取總數</div>
+        <div id="stat-total" class="text-2xl font-bold text-white mt-1 font-mono">0</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div class="text-xs text-slate-400">平均星等</div>
+        <div id="stat-avg" class="text-2xl font-bold text-amber-400 mt-1 font-mono">0.0 ★</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div class="text-xs text-slate-400">負評數量 (≤ 3★)</div>
+        <div id="stat-neg" class="text-2xl font-bold text-rose-400 mt-1 font-mono">0</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div class="text-xs text-slate-400">店家尚未回覆</div>
+        <div id="stat-unreplied" class="text-2xl font-bold text-sky-400 mt-1 font-mono">0</div>
+      </div>
+    </section>
+
+    <!-- Results List -->
+    <section id="results-list" class="space-y-3"></section>
+  </div>
+
+  <script>
+    const urlInput = document.getElementById("url-input");
+    const sortSelect = document.getElementById("sort-select");
+    const pagesSelect = document.getElementById("pages-select");
+    const scrapeBtn = document.getElementById("scrape-btn");
+    const alertBox = document.getElementById("alert-box");
+    const statsSection = document.getElementById("stats-section");
+    const resultsList = document.getElementById("results-list");
+    const exportCsvBtn = document.getElementById("export-csv-btn");
+
+    let currentReviews = [];
+
+    document.getElementById("fill-demo-url").addEventListener("click", () => {
+      urlInput.value = "https://www.google.com/maps/place/Taipei+101/@25.0339639,121.5644722,17z/data=!4m6!3m5!1s0x3442abb6da9c9e1f:0x1206bcf082fd10a6!8m2!3d25.0339639!4d121.5644722!16zL20vMDI0Mm1y";
+    });
+
+    function showAlert(msg, type = "error") {
+      alertBox.classList.remove("hidden", "bg-rose-950/50", "border-rose-700", "text-rose-200", "bg-emerald-950/50", "border-emerald-700", "text-emerald-200");
+      if (type === "error") {
+        alertBox.classList.add("bg-rose-950/50", "border-rose-700", "text-rose-200");
+      } else {
+        alertBox.classList.add("bg-emerald-950/50", "border-emerald-700", "text-emerald-200");
+      }
+      alertBox.textContent = msg;
+    }
+
+    scrapeBtn.addEventListener("click", async () => {
+      const url = urlInput.value.trim();
+      if (!url) {
+        showAlert("請先貼上 Google Maps 店家連結！");
+        return;
+      }
+
+      scrapeBtn.disabled = true;
+      scrapeBtn.textContent = "⏳ 正在爬取中...";
+      alertBox.classList.add("hidden");
+      resultsList.innerHTML = "";
+
+      try {
+        const resp = await fetch("/api/scrape", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url,
+            sort_type: sortSelect.value,
+            pages: Number(pagesSelect.value),
+          }),
+        });
+        const data = await resp.json();
+
+        if (!data.ok) {
+          showAlert("❌ " + data.error, "error");
+          return;
+        }
+
+        currentReviews = data.reviews || [];
+        if (currentReviews.length === 0) {
+          showAlert("⚠️ 連線成功但回傳 0 筆評論（可能是目前伺服器 IP 被 Google 暫時限流，或該店家無公開評論）。", "error");
+          statsSection.classList.add("hidden");
+          exportCsvBtn.disabled = true;
+          return;
+        }
+
+        showAlert(`✅ 成功抓取 ${currentReviews.length} 則評論！`, "success");
+        renderResults(currentReviews);
+      } catch (err) {
+        showAlert("❌ 伺服器連線錯誤：" + err.message, "error");
+      } finally {
+        scrapeBtn.disabled = false;
+        scrapeBtn.textContent = "🚀 開始爬取";
+      }
+    });
+
+    function renderResults(reviews) {
+      statsSection.classList.remove("hidden");
+      exportCsvBtn.disabled = false;
+
+      let sumRating = 0;
+      let negCount = 0;
+      let unrepliedCount = 0;
+
+      resultsList.innerHTML = reviews
+        .map((r) => {
+          const rating = Number(r.review?.rating || r.rating || 0);
+          const text = r.review?.text || r.text || "（僅評分無文字內容）";
+          const author = r.author?.name || r.author || "匿名使用者";
+          const date = r.time?.published || r.date || "";
+          const ownerReply = r.response?.text || "";
+
+          sumRating += rating;
+          if (rating > 0 && rating <= 3) negCount++;
+          if (!ownerReply) unrepliedCount++;
+
+          const stars = "★".repeat(Math.round(rating)) + "☆".repeat(5 - Math.round(rating));
+          const isNeg = rating <= 3;
+
+          return `
+            <div class="bg-slate-900 border ${isNeg ? "border-rose-800/70" : "border-slate-800"} rounded-xl p-4 space-y-2">
+              <div class="flex items-center justify-between gap-2">
+                <div class="font-medium text-white">${escapeHtml(author)}</div>
+                <div class="flex items-center gap-3 text-xs">
+                  <span class="${isNeg ? "text-rose-400" : "text-amber-400"} font-mono">${stars} (${rating})</span>
+                  <span class="text-slate-500">${escapeHtml(String(date))}</span>
+                </div>
+              </div>
+              <p class="text-sm text-slate-300 leading-relaxed">${escapeHtml(text)}</p>
+              ${
+                ownerReply
+                  ? `<div class="mt-2 p-2.5 rounded bg-slate-950 border border-slate-800 text-xs text-slate-400"><strong class="text-sky-400">業者回覆：</strong>${escapeHtml(ownerReply)}</div>`
+                  : ""
+              }
+            </div>
+          `;
+        })
+        .join("");
+
+      document.getElementById("stat-total").textContent = reviews.length;
+      document.getElementById("stat-avg").textContent = `${(sumRating / reviews.length).toFixed(1)} ★`;
+      document.getElementById("stat-neg").textContent = negCount;
+      document.getElementById("stat-unreplied").textContent = unrepliedCount;
+    }
+
+    exportCsvBtn.addEventListener("click", () => {
+      if (!currentReviews.length) return;
+      const rows = [["作者", "星等", "評論內容", "店家回覆"]];
+      currentReviews.forEach((r) => {
+        const author = (r.author?.name || r.author || "").replace(/"/g, '""');
+        const rating = r.review?.rating || r.rating || "";
+        const text = (r.review?.text || r.text || "").replace(/"/g, '""').replace(/\n/g, " ");
+        const reply = (r.response?.text || "").replace(/"/g, '""').replace(/\n/g, " ");
+        rows.push([`"${author}"`, `"${rating}"`, `"${text}"`, `"${reply}"`]);
+      });
+      const csv = "\uFEFF" + rows.map((e) => e.join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "google_reviews.csv";
+      a.click();
+    });
+
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+  </script>
+</body>
+</html>

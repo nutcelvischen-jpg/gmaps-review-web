@@ -1,0 +1,13 @@
+{
+  "name": "gmaps-review-web",
+  "version": "1.0.0",
+  "description": "Web app wrapper for YasogaN/google-maps-review-scraper",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "google-maps-review-scraper": "^3.1.0"
+  }
+}
